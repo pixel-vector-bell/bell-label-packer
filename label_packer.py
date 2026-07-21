@@ -37,7 +37,9 @@ def labels_needed(flyers: int) -> int:
 
 
 def parse_count(path: str):
-    m = re.search(r'_(\d+)_Flyers', os.path.basename(path), re.IGNORECASE)
+    # Accept space OR underscore around the number, e.g.
+    #   "Teton HS Labels 2000 Flyers.pdf"  or  "Teton_HS_Labels_2000_Flyers.pdf"
+    m = re.search(r'[ _](\d+)[ _]*Flyers', os.path.basename(path), re.IGNORECASE)
     return int(m.group(1)) if m else None
 
 
