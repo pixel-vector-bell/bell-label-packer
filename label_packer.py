@@ -178,39 +178,64 @@ def launch_gui():
         logbox.insert("end", str(msg) + "\n"); logbox.see("end"); root.update()
 
     # --- Right: preview pane ---
-    tk.Label(right, text="Preview — first page (72 dpi):",
+    tk.Label(right, text="Preview — first page (fit to view):",
              font=("Segoe UI", 9, "bold")).pack(anchor="w")
     preview_canvas = tk.Canvas(right, bg="#e9e9e9", highlightthickness=1,
                                highlightbackground="#bbb")
     preview_canvas.pack(fill="both", expand=True, pady=(4, 0))
     # Keep a reference to the PhotoImage so it isn't garbage-collected.
     _preview_ref = {}
+    _preview_state = {"resize_job": ""}
 
     def render_preview():
-        """Render the first packed page into the preview canvas at 72 dpi."""
+        """Render the first packed page scaled to FIT the preview canvas,
+        preserving the page's aspect ratio (US Letter 612x792)."""
         preview_canvas.delete("all")
+        cw = preview_canvas.winfo_width()
+        ch = preview_canvas.winfo_height()
+        if cw <= 1 or ch <= 1:
+            # Canvas not laid out yet — try again shortly.
+            root.after(120, render_preview)
+            return
         if not chosen_files:
-            preview_canvas.create_text(210, 260, text="(select files to preview)",
+            preview_canvas.create_text(cw // 2, ch // 2,
+                                       text="(select files to preview)",
                                        fill="#888", font=("Segoe UI", 10))
             return
         try:
             entries, _ = collect_labels(chosen_files, log=lambda *a, **k: None)
             if not entries:
-                preview_canvas.create_text(210, 260, text="(no valid label files)",
+                preview_canvas.create_text(cw // 2, ch // 2,
+                                           text="(no valid label files)",
                                            fill="#888", font=("Segoe UI", 10))
                 return
             doc = build_first_page(entries)
-            pix = doc[0].get_pixmap(dpi=PREVIEW_DPI)
+            page = doc[0]
+            # Compute a zoom that fits the page inside the canvas (with a small
+            # margin), keeping aspect ratio. 72 pt = 1 in, so zoom=1 → 72 dpi.
+            margin = 12
+            avail_w = max(1, cw - margin)
+            avail_h = max(1, ch - margin)
+            zoom = min(avail_w / page.rect.width, avail_h / page.rect.height)
+            zoom = max(0.05, zoom)  # guard against zero/negative
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
             doc.close()
-            # tkinter can read PPM/PGM directly from PyMuPDF bytes.
             img = tk.PhotoImage(data=pix.tobytes("ppm"))
             _preview_ref["img"] = img
-            cw = preview_canvas.winfo_width() or 420
-            ch = preview_canvas.winfo_height() or 520
             preview_canvas.create_image(cw // 2, ch // 2, image=img)
         except Exception as e:
-            preview_canvas.create_text(210, 260, text=f"(preview error: {e})",
+            preview_canvas.create_text(cw // 2, ch // 2,
+                                       text=f"(preview error: {e})",
                                        fill="#a00", font=("Segoe UI", 9))
+
+    def _on_canvas_resize(event):
+        # Debounce: re-fit the preview ~150ms after the last resize event so we
+        # don't re-render on every intermediate pixel while dragging.
+        if _preview_state["resize_job"]:
+            root.after_cancel(_preview_state["resize_job"])
+        _preview_state["resize_job"] = root.after(150, render_preview)
+
+    preview_canvas.bind("<Configure>", _on_canvas_resize)
 
     def refresh_filelist():
         filelist.delete(0, "end")
